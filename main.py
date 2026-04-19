@@ -1,9 +1,15 @@
+# mobile_app.py (fixed)
 import flet as ft
-import pyodbc
+import requests
+import json
+import asyncio
+import websockets
 
 # ==================== CONFIGURATION ====================
-DB_PATH = r"D:\vsCodeProj\table-order-app\omnigest2018.accdb"
-DB_PASSWORD = "qaz"
+SERVER_IP = "192.168.1.129"   # <-- CHANGE THIS to your PC's IP
+SERVER_PORT = 8000
+BASE_URL = f"http://{SERVER_IP}:{SERVER_PORT}"
+WS_URL = f"ws://{SERVER_IP}:{SERVER_PORT}/ws"
 # =======================================================
 
 def main(page: ft.Page):
@@ -12,50 +18,20 @@ def main(page: ft.Page):
     page.padding = 20
     page.scroll = ft.ScrollMode.AUTO
 
-    # ==================== DATABASE CONNECTION ====================
-    def get_db_connection():
-        """Create and return a pyodbc connection to the password‑protected Access database."""
-        conn_str = (
-            r'DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};'
-            r'DBQ=' + DB_PATH + ';'
-            f'PWD={DB_PASSWORD};'
-        )
-        return pyodbc.connect(conn_str)
-
-    def get_products():
-        """
-        Retrieve all items from the RAIOANE table.
-        Uses only the 'den_raion' column; supplies a default emoji and zero price.
-        """
-        try:
-            conn = get_db_connection()
-            c = conn.cursor()
-            c.execute("SELECT den_raion FROM RAIOANE ORDER BY den_raion")
-            rows = c.fetchall()
-            conn.close()
-
-            products = []
-            for row in rows:
-                name = row[0] if row[0] else "Unnamed"
-                products.append((name, "📋", 0.0))
-            return products
-
-        except pyodbc.Error as e:
-            print(f"Database error: {e}")
-            # Fallback for when the database cannot be read
-            return [("Error loading items", "⚠️", 0.0)]
-
-    # ==================== IN-MEMORY ORDERS ====================
+    # ------------------- Global State -------------------
+    products = []
     orders = {i: [] for i in range(1, 13)}
     current_table = None
+    current_update_order_list = None   # Holds the update function for the current table
 
-    # ==================== TABLE GRID ====================
+    # ------------------- UI Components -------------------
     grid = ft.Row(wrap=True, spacing=20, run_spacing=20, alignment=ft.MainAxisAlignment.CENTER)
+    status_text = ft.Text("", color=ft.Colors.GREY_500)
 
     def show_table_grid():
         grid.controls.clear()
         for t in range(1, 13):
-            item_count = len(orders[t])
+            item_count = len(orders.get(t, []))
             color = ft.Colors.GREEN_400 if item_count == 0 else ft.Colors.ORANGE_400
             btn = ft.FilledButton(
                 content=ft.Container(
@@ -75,13 +51,76 @@ def main(page: ft.Page):
             grid.controls.append(btn)
         page.update()
 
-    # ==================== ORDER SCREEN ====================
+    # ------------------- Network Functions -------------------
+    def fetch_products():
+        nonlocal products
+        try:
+            resp = requests.get(f"{BASE_URL}/products", timeout=5)
+            resp.raise_for_status()
+            products = resp.json()
+            status_text.value = "Connected"
+            status_text.color = ft.Colors.GREEN_500
+        except Exception as e:
+            status_text.value = f"Error: {e}"
+            status_text.color = ft.Colors.RED_500
+            products = [{"name": "Offline", "emoji": "❌", "price": 0.0}]
+        page.update()
+
+    def fetch_orders():
+        nonlocal orders
+        try:
+            resp = requests.get(f"{BASE_URL}/orders", timeout=5)
+            resp.raise_for_status()
+            orders = resp.json()
+            orders = {int(k): v for k, v in orders.items()}
+        except Exception as e:
+            print(f"Fetch orders error: {e}")
+        show_table_grid()
+        page.update()
+
+    def send_order_update(table, action, item, qty=None):
+        payload = {"table": table, "action": action, "item": item}
+        if qty is not None:
+            payload["qty"] = qty
+        try:
+            requests.post(f"{BASE_URL}/order", json=payload, timeout=3)
+        except Exception as e:
+            status_text.value = f"Send error: {e}"
+            status_text.color = ft.Colors.RED_500
+            page.update()
+
+    # ------------------- WebSocket Listener -------------------
+    async def websocket_listener():
+        while True:
+            try:
+                async with websockets.connect(WS_URL) as websocket:
+                    status_text.value = "Connected (live)"
+                    status_text.color = ft.Colors.GREEN_500
+                    page.update()
+                    while True:
+                        msg = await websocket.recv()
+                        data = json.loads(msg)
+                        if data.get("type") == "orders_update":
+                            nonlocal orders
+                            raw_orders = data["data"]
+                            orders = {int(k): v for k, v in raw_orders.items()}
+                            if current_table is None:
+                                show_table_grid()
+                            else:
+                                # Call the current table's update function if it exists
+                                if current_update_order_list:
+                                    current_update_order_list()
+            except Exception as e:
+                status_text.value = f"Reconnecting... ({e})"
+                status_text.color = ft.Colors.ORANGE_500
+                page.update()
+                await asyncio.sleep(3)
+
+    # ------------------- Table Order Screen -------------------
     def select_table(table):
-        nonlocal current_table
+        nonlocal current_table, current_update_order_list
         current_table = table
         page.controls.clear()
-
-        products = get_products()
 
         # Header
         page.add(ft.Row([
@@ -93,39 +132,40 @@ def main(page: ft.Page):
 
         def update_order_list():
             order_list.controls.clear()
-            for item in orders[table]:
+            for item in orders.get(table, []):
                 row = ft.Row([
                     ft.Text(f"{item['emoji']} {item['name']}", expand=True, size=18),
                     ft.Text(f"${item['price']:.2f}" if item['price'] > 0 else "",
                             size=16, color=ft.Colors.BLUE_700),
-                    ft.IconButton(icon=ft.Icons.REMOVE, on_click=lambda e, i=item: change_qty(i, -1)),
+                    ft.IconButton(icon=ft.Icons.REMOVE,
+                                  on_click=lambda e, i=item: change_qty(i, -1)),
                     ft.Text(str(item["qty"]), width=40, text_align=ft.TextAlign.CENTER, size=18),
-                    ft.IconButton(icon=ft.Icons.ADD, on_click=lambda e, i=item: change_qty(i, 1)),
+                    ft.IconButton(icon=ft.Icons.ADD,
+                                  on_click=lambda e, i=item: change_qty(i, 1)),
                 ])
                 order_list.controls.append(row)
             page.update()
 
+        # Store the update function for use by WebSocket listener
+        current_update_order_list = update_order_list
+
         def change_qty(item, delta):
-            item["qty"] = max(1, item["qty"] + delta)
-            update_order_list()
+            new_qty = item["qty"] + delta
+            if new_qty <= 0:
+                send_order_update(table, "remove", item)
+            else:
+                send_order_update(table, "set_qty", item, qty=new_qty)
 
-        def add_item(name, emoji, price):
-            for existing in orders[table]:
-                if existing["name"] == name:
-                    existing["qty"] += 1
-                    update_order_list()
-                    return
-            orders[table].append({"name": name, "emoji": emoji, "qty": 1, "price": price})
-            update_order_list()
+        def add_item(item):
+            send_order_update(table, "add", item)
 
-        # Menu buttons built from the database
         menu_row = ft.Row(wrap=True, spacing=10, run_spacing=10)
-        for name, emoji, price in products:
-            price_text = f"  ${price:.2f}" if price > 0 else ""
+        for p in products:
+            price_text = f"  ${p['price']:.2f}" if p['price'] > 0 else ""
             menu_row.controls.append(
                 ft.FilledButton(
-                    content=ft.Text(f"{emoji} {name}{price_text}"),
-                    on_click=lambda e, n=name, em=emoji, pr=price: add_item(n, em, pr)
+                    content=ft.Text(f"{p['emoji']} {p['name']}{price_text}"),
+                    on_click=lambda e, prod=p: add_item(prod)
                 )
             )
 
@@ -139,16 +179,23 @@ def main(page: ft.Page):
         update_order_list()
 
     def back_to_grid():
+        nonlocal current_table, current_update_order_list
+        current_table = None
+        current_update_order_list = None
         page.controls.clear()
         page.add(ft.Text("Select a Table", size=32, weight=ft.FontWeight.BOLD))
         page.add(grid)
+        page.add(status_text)
         show_table_grid()
 
-    # Start the app
+    # ------------------- Initial Setup -------------------
+    fetch_products()
+    fetch_orders()
+    page.run_task(websocket_listener)
+
     page.add(ft.Text("Select a Table", size=32, weight=ft.FontWeight.BOLD))
     page.add(grid)
+    page.add(status_text)
     show_table_grid()
 
-
-# Correct modern Flet entry point
-ft.app(main)
+ft.run(main)
