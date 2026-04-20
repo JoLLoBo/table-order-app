@@ -139,8 +139,8 @@ def save_order_to_dbf(table, action, item, qty=None):
                     found = False
                     for rec in dbf_file:
                         if rec.NR_MASA == table and rec.DEN.strip() == item["name"]:
-                            rec.CANTITATE = rec.CANTITATE + 1
-                            dbf.write(rec)
+                            # Use dbf.write with new quantity
+                            dbf.write(rec, CANTITATE=rec.CANTITATE + 1)
                             found = True
                             break
                     if not found:
@@ -166,8 +166,7 @@ def save_order_to_dbf(table, action, item, qty=None):
                     for rec in dbf_file:
                         if rec.NR_MASA == table and rec.DEN.strip() == item["name"]:
                             if rec.CANTITATE > 1:
-                                rec.CANTITATE = rec.CANTITATE - 1
-                                dbf.write(rec)
+                                dbf.write(rec, CANTITATE=rec.CANTITATE - 1)
                             else:
                                 dbf.delete(rec)
                             break
@@ -182,8 +181,7 @@ def save_order_to_dbf(table, action, item, qty=None):
                         found = False
                         for rec in dbf_file:
                             if rec.NR_MASA == table and rec.DEN.strip() == item["name"]:
-                                rec.CANTITATE = qty
-                                dbf.write(rec)
+                                dbf.write(rec, CANTITATE=qty)
                                 found = True
                                 break
                         if not found:
