@@ -93,7 +93,7 @@ def main(page: ft.Page):
     async def websocket_listener():
         while True:
             try:
-                async with websockets.connect(WS_URL) as websocket:
+                async with websockets.connect(WS_URL, ping_interval=None) as websocket:
                     status_text.value = "Connected (live)"
                     status_text.color = ft.Colors.GREEN_500
                     page.update()
@@ -107,11 +107,10 @@ def main(page: ft.Page):
                             if current_table is None:
                                 show_table_grid()
                             else:
-                                # Call the current table's update function if it exists
                                 if current_update_order_list:
                                     current_update_order_list()
             except Exception as e:
-                status_text.value = f"Reconnecting... ({e})"
+                status_text.value = f"Reconnecting... ({str(e)[:30]})"
                 status_text.color = ft.Colors.ORANGE_500
                 page.update()
                 await asyncio.sleep(3)
@@ -146,7 +145,6 @@ def main(page: ft.Page):
                 order_list.controls.append(row)
             page.update()
 
-        # Store the update function for use by WebSocket listener
         current_update_order_list = update_order_list
 
         def change_qty(item, delta):
@@ -198,4 +196,4 @@ def main(page: ft.Page):
     page.add(status_text)
     show_table_grid()
 
-ft.run(main)
+ft.app(target=main)
