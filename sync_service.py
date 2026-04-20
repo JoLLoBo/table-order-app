@@ -1,4 +1,4 @@
-# sync_service.py (Fixed DBF write with correct API)
+# sync_service.py (Final – DISCOUNT and PRET_CUMP left empty)
 import asyncio
 import json
 import pyodbc
@@ -19,10 +19,6 @@ ACCESS_DB_PASSWORD = "qaz"
 DBF_PATH = r"D:\gestiune_touch_mm_2_retea\Fisiere\vanzare.dbf"
 HOST = "0.0.0.0"
 PORT = 8000
-
-SERVER_NUMBER = 1
-SERVICE_TYPE = "P"
-DEFAULT_UM = "BUC"
 
 CAT_ID_COL = "cod"
 CAT_NAME_COL = "den_raion"
@@ -69,7 +65,7 @@ def fetch_products():
 
         cursor.execute(f"""
             SELECT [{PROD_GRUPA_COL}], [{PROD_SUBGRUPA_COL}], [{PROD_NAME_COL}], 
-                   [{PROD_PRICE_COL}], [{PROD_CODE_COL}], [{PROD_CTVA_COL}]
+                   [{PROD_PRICE_COL}], [{PROD_CODE_COL}], [{PROD_CTVA_COL}], um, tip_serviciu
             FROM CATALOG_PRODUSE
             WHERE [{PROD_NAME_COL}] IS NOT NULL AND TRIM([{PROD_NAME_COL}]) <> ''
             ORDER BY [{PROD_NAME_COL}]
@@ -81,6 +77,8 @@ def fetch_products():
             price = row[3] if row[3] is not None else 0.0
             code = row[4] or ""
             ctva = row[5] or 0
+            um = (row[6] or "").strip() or "BUC"
+            tip_serviciu = (row[7] or "").strip() or "P"
             if grupa in cat_map and name:
                 cat_map[grupa]["products"].append({
                     "name": name,
@@ -89,7 +87,9 @@ def fetch_products():
                     "code": str(code),
                     "grupa": grupa,
                     "subgrupa": int(subgrupa) if subgrupa else 0,
-                    "ctva": int(ctva) if ctva else 0
+                    "ctva": int(ctva) if ctva else 0,
+                    "um": um,
+                    "tip_serviciu": tip_serviciu
                 })
 
         conn.close()
@@ -138,18 +138,28 @@ def save_order_to_dbf(table, action, item, qty=None):
                 if action == "add":
                     found = False
                     for rec in dbf_file:
-                        # Check if the item already exists for this table
                         if rec.NR_MASA == table and rec.DEN.strip() == item["name"]:
                             rec.CANTITATE = rec.CANTITATE + 1
                             dbf.write(rec)
                             found = True
                             break
                     if not found:
-                        # Minimal new record: only name, quantity, and table
                         dbf_file.append({
                             'DEN': item["name"],
+                            'UM': item.get("um", "BUC"),
+                            'PRETV': item["price"],
                             'CANTITATE': 1,
-                            'NR_MASA': table
+                            'DISCOUNT': None,
+                            'COD': item["code"],
+                            'TIP_SERV': item.get("tip_serviciu", "P"),
+                            'PRET_CUMP': None,
+                            'CTVA': item["ctva"],
+                            'NR_MASA': table,
+                            'OSPATAR': 9,
+                            'MARCAJ': "",
+                            'INCHIS': "",
+                            'GRUPA': str(item["grupa"]),
+                            'SUBGRUPA': str(item["subgrupa"])
                         })
 
                 elif action == "remove":
@@ -179,8 +189,20 @@ def save_order_to_dbf(table, action, item, qty=None):
                         if not found:
                             dbf_file.append({
                                 'DEN': item["name"],
+                                'UM': item.get("um", "BUC"),
+                                'PRETV': item["price"],
                                 'CANTITATE': qty,
-                                'NR_MASA': table
+                                'DISCOUNT': None,
+                                'COD': item["code"],
+                                'TIP_SERV': item.get("tip_serviciu", "P"),
+                                'PRET_CUMP': None,
+                                'CTVA': item["ctva"],
+                                'NR_MASA': table,
+                                'OSPATAR': 9,
+                                'MARCAJ': "",
+                                'INCHIS': "",
+                                'GRUPA': str(item["grupa"]),
+                                'SUBGRUPA': str(item["subgrupa"])
                             })
 
                 dbf_file.pack()
