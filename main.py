@@ -1,4 +1,4 @@
-# mobile_app.py (fixed)
+# mobile_app.py (with category/product hierarchy)
 import flet as ft
 import requests
 import json
@@ -19,10 +19,10 @@ def main(page: ft.Page):
     page.scroll = ft.ScrollMode.AUTO
 
     # ------------------- Global State -------------------
-    products = []
+    products = []  # Now a list of categories, each with 'products'
     orders = {i: [] for i in range(1, 13)}
     current_table = None
-    current_update_order_list = None   # Holds the update function for the current table
+    current_update_order_list = None
 
     # ------------------- UI Components -------------------
     grid = ft.Row(wrap=True, spacing=20, run_spacing=20, alignment=ft.MainAxisAlignment.CENTER)
@@ -58,12 +58,13 @@ def main(page: ft.Page):
             resp = requests.get(f"{BASE_URL}/products", timeout=5)
             resp.raise_for_status()
             products = resp.json()
+            print(f"Fetched {len(products)} categories")
             status_text.value = "Connected"
             status_text.color = ft.Colors.GREEN_500
         except Exception as e:
             status_text.value = f"Error: {e}"
             status_text.color = ft.Colors.RED_500
-            products = [{"name": "Offline", "emoji": "❌", "price": 0.0}]
+            products = [{"id": 0, "name": "Offline", "emoji": "❌", "products": []}]
         page.update()
 
     def fetch_orders():
@@ -157,22 +158,41 @@ def main(page: ft.Page):
         def add_item(item):
             send_order_update(table, "add", item)
 
-        menu_row = ft.Row(wrap=True, spacing=10, run_spacing=10)
-        for p in products:
-            price_text = f"  ${p['price']:.2f}" if p['price'] > 0 else ""
-            menu_row.controls.append(
-                ft.FilledButton(
-                    content=ft.Text(f"{p['emoji']} {p['name']}{price_text}"),
-                    on_click=lambda e, prod=p: add_item(prod)
+        # Build expandable category panels
+        category_panels = []
+        for cat in products:
+            if not cat.get("products"):
+                continue
+            product_buttons = []
+            for p in cat["products"]:
+                price_text = f"  ${p['price']:.2f}" if p.get('price', 0) > 0 else ""
+                product_buttons.append(
+                    ft.FilledButton(
+                        content=ft.Text(f"{p['emoji']} {p['name']}{price_text}"),
+                        on_click=lambda e, prod=p: add_item(prod)
+                    )
                 )
+            panel = ft.ExpansionPanel(
+                header=ft.ListTile(title=ft.Text(f"{cat['emoji']} {cat['name']}", size=18, weight=ft.FontWeight.BOLD)),
+                content=ft.Container(
+                    content=ft.Column(product_buttons, scroll=ft.ScrollMode.AUTO),
+                    padding=10,
+                ),
+                expanded=False,
             )
+            category_panels.append(panel)
+
+        menu_section = ft.ExpansionPanelList(
+            controls=category_panels,
+            expanded_header_padding=10,
+        )
 
         page.add(
             ft.Text("Current order:", size=20, weight=ft.FontWeight.BOLD),
             order_list,
             ft.Divider(),
             ft.Text("Add item:", size=20, weight=ft.FontWeight.BOLD),
-            menu_row
+            menu_section
         )
         update_order_list()
 

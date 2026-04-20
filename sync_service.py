@@ -1,10 +1,11 @@
-# sync_service.py (Direct DBF Access – No VSS Needed)
+# sync_service.py (Corrected for actual Access schema)
 import asyncio
 import json
 import pyodbc
 import hashlib
 import os
 import time
+import traceback
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
@@ -15,10 +16,18 @@ import dbf
 # ==================== CONFIGURATION ====================
 ACCESS_DB_PATH = r"D:\Gestiune_og\omnigest2018.accdb"
 ACCESS_DB_PASSWORD = "qaz"
-# Updated path – file is now in a shared folder and not locked
 DBF_PATH = r"D:\gestiune_touch_mm_2_retea\Fisiere\vanzare.dbf"
 HOST = "0.0.0.0"
 PORT = 8000
+
+# =======================================================
+# CORRECT COLUMN NAMES FOR YOUR DATABASE
+# =======================================================
+CAT_ID_COL = "cod"
+CAT_NAME_COL = "den_raion"
+PROD_GRUPA_COL = "grupa"
+PROD_NAME_COL = "den"
+PROD_PRICE_COL = "pretv"   # selling price
 # =======================================================
 
 app = FastAPI()
@@ -29,7 +38,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ------------------- Products from Access -------------------
+# ------------------- Access Database Helper -------------------
 def get_access_connection():
     conn_str = (
         r'DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};'
@@ -38,19 +47,70 @@ def get_access_connection():
     )
     return pyodbc.connect(conn_str)
 
+# ------------------- Fetch Products with Categories -------------------
 def fetch_products():
     try:
         conn = get_access_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT den_raion FROM RAIOANE ORDER BY den_raion")
-        rows = cursor.fetchall()
-        conn.close()
-        return [{"name": r[0] or "Unnamed", "emoji": "📋", "price": 0.0} for r in rows]
-    except Exception as e:
-        print(f"Products error: {e}")
-        return [{"name": "Error", "emoji": "⚠️", "price": 0.0}]
 
-# ------------------- Simple DBF Reader (No Locks) -------------------
+        print(f"[Products] Using category columns: {CAT_ID_COL}, {CAT_NAME_COL}")
+        print(f"[Products] Using product columns: {PROD_GRUPA_COL}, {PROD_NAME_COL}, {PROD_PRICE_COL}")
+
+        # Fetch categories
+        cursor.execute(f"SELECT [{CAT_ID_COL}], [{CAT_NAME_COL}] FROM RAIOANE ORDER BY [{CAT_NAME_COL}]")
+        categories = []
+        cat_map = {}
+        for row in cursor.fetchall():
+            cat_id = row[0]
+            cat_name = (row[1] or "").strip()
+            if not cat_name:
+                cat_name = "Unnamed"
+            cat = {
+                "id": cat_id,
+                "name": cat_name,
+                "emoji": "📁",
+                "products": []
+            }
+            categories.append(cat)
+            cat_map[cat_id] = cat
+
+        # Fetch products
+        cursor.execute(f"""
+            SELECT [{PROD_GRUPA_COL}], [{PROD_NAME_COL}], [{PROD_PRICE_COL}]
+            FROM CATALOG_PRODUSE
+            WHERE [{PROD_NAME_COL}] IS NOT NULL AND TRIM([{PROD_NAME_COL}]) <> ''
+            ORDER BY [{PROD_NAME_COL}]
+        """)
+        for row in cursor.fetchall():
+            grupa = row[0]
+            name = (row[1] or "").strip()
+            price = row[2] if row[2] is not None else 0.0
+            if grupa in cat_map and name:
+                cat_map[grupa]["products"].append({
+                    "name": name,
+                    "emoji": "📋",
+                    "price": float(price)
+                })
+
+        conn.close()
+
+        # Remove categories with no products
+        categories = [c for c in categories if c["products"]]
+        print(f"[Products] Loaded {sum(len(c['products']) for c in categories)} products in {len(categories)} categories.")
+        return categories
+
+    except Exception as e:
+        print("\n=== ERROR FETCHING PRODUCTS ===")
+        traceback.print_exc()
+        print("================================\n")
+        return [{
+            "id": 0,
+            "name": f"Error: {str(e)}",
+            "emoji": "⚠️",
+            "products": []
+        }]
+
+# ------------------- Simple DBF Reader -------------------
 def load_orders_from_dbf():
     orders = {i: [] for i in range(1, 13)}
     if not os.path.exists(DBF_PATH):
@@ -134,7 +194,6 @@ def save_order_to_dbf(table, action, item, qty=None):
                 dbf_file.close()
                 raise
         except PermissionError:
-            # If the file is occasionally locked, retry with exponential backoff
             time.sleep(0.5 * (2 ** attempt))
         except Exception as e:
             print(f"Write error attempt {attempt+1}: {e}")
