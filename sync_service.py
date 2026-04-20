@@ -1,4 +1,4 @@
-# sync_service.py (Corrected for actual Access schema)
+# sync_service.py (Fixed DBF write with correct API)
 import asyncio
 import json
 import pyodbc
@@ -20,14 +20,18 @@ DBF_PATH = r"D:\gestiune_touch_mm_2_retea\Fisiere\vanzare.dbf"
 HOST = "0.0.0.0"
 PORT = 8000
 
-# =======================================================
-# CORRECT COLUMN NAMES FOR YOUR DATABASE
-# =======================================================
+SERVER_NUMBER = 1
+SERVICE_TYPE = "P"
+DEFAULT_UM = "BUC"
+
 CAT_ID_COL = "cod"
 CAT_NAME_COL = "den_raion"
 PROD_GRUPA_COL = "grupa"
+PROD_SUBGRUPA_COL = "subgrupa"
 PROD_NAME_COL = "den"
-PROD_PRICE_COL = "pretv"   # selling price
+PROD_PRICE_COL = "pretv"
+PROD_CODE_COL = "cod"
+PROD_CTVA_COL = "ctva"
 # =======================================================
 
 app = FastAPI()
@@ -38,7 +42,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ------------------- Access Database Helper -------------------
 def get_access_connection():
     conn_str = (
         r'DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};'
@@ -47,16 +50,11 @@ def get_access_connection():
     )
     return pyodbc.connect(conn_str)
 
-# ------------------- Fetch Products with Categories -------------------
 def fetch_products():
     try:
         conn = get_access_connection()
         cursor = conn.cursor()
 
-        print(f"[Products] Using category columns: {CAT_ID_COL}, {CAT_NAME_COL}")
-        print(f"[Products] Using product columns: {PROD_GRUPA_COL}, {PROD_NAME_COL}, {PROD_PRICE_COL}")
-
-        # Fetch categories
         cursor.execute(f"SELECT [{CAT_ID_COL}], [{CAT_NAME_COL}] FROM RAIOANE ORDER BY [{CAT_NAME_COL}]")
         categories = []
         cat_map = {}
@@ -65,36 +63,36 @@ def fetch_products():
             cat_name = (row[1] or "").strip()
             if not cat_name:
                 cat_name = "Unnamed"
-            cat = {
-                "id": cat_id,
-                "name": cat_name,
-                "emoji": "📁",
-                "products": []
-            }
+            cat = {"id": cat_id, "name": cat_name, "emoji": "📁", "products": []}
             categories.append(cat)
             cat_map[cat_id] = cat
 
-        # Fetch products
         cursor.execute(f"""
-            SELECT [{PROD_GRUPA_COL}], [{PROD_NAME_COL}], [{PROD_PRICE_COL}]
+            SELECT [{PROD_GRUPA_COL}], [{PROD_SUBGRUPA_COL}], [{PROD_NAME_COL}], 
+                   [{PROD_PRICE_COL}], [{PROD_CODE_COL}], [{PROD_CTVA_COL}]
             FROM CATALOG_PRODUSE
             WHERE [{PROD_NAME_COL}] IS NOT NULL AND TRIM([{PROD_NAME_COL}]) <> ''
             ORDER BY [{PROD_NAME_COL}]
         """)
         for row in cursor.fetchall():
             grupa = row[0]
-            name = (row[1] or "").strip()
-            price = row[2] if row[2] is not None else 0.0
+            subgrupa = row[1] or 0
+            name = (row[2] or "").strip()
+            price = row[3] if row[3] is not None else 0.0
+            code = row[4] or ""
+            ctva = row[5] or 0
             if grupa in cat_map and name:
                 cat_map[grupa]["products"].append({
                     "name": name,
                     "emoji": "📋",
-                    "price": float(price)
+                    "price": float(price),
+                    "code": str(code),
+                    "grupa": grupa,
+                    "subgrupa": int(subgrupa) if subgrupa else 0,
+                    "ctva": int(ctva) if ctva else 0
                 })
 
         conn.close()
-
-        # Remove categories with no products
         categories = [c for c in categories if c["products"]]
         print(f"[Products] Loaded {sum(len(c['products']) for c in categories)} products in {len(categories)} categories.")
         return categories
@@ -103,14 +101,8 @@ def fetch_products():
         print("\n=== ERROR FETCHING PRODUCTS ===")
         traceback.print_exc()
         print("================================\n")
-        return [{
-            "id": 0,
-            "name": f"Error: {str(e)}",
-            "emoji": "⚠️",
-            "products": []
-        }]
+        return [{"id": 0, "name": f"Error: {str(e)}", "emoji": "⚠️", "products": []}]
 
-# ------------------- Simple DBF Reader -------------------
 def load_orders_from_dbf():
     orders = {i: [] for i in range(1, 13)}
     if not os.path.exists(DBF_PATH):
@@ -136,7 +128,6 @@ def load_orders_from_dbf():
 
     return orders
 
-# ------------------- DBF Write (with retries) -------------------
 def save_order_to_dbf(table, action, item, qty=None):
     max_retries = 5
     for attempt in range(max_retries):
@@ -147,17 +138,20 @@ def save_order_to_dbf(table, action, item, qty=None):
                 if action == "add":
                     found = False
                     for rec in dbf_file:
+                        # Check if the item already exists for this table
                         if rec.NR_MASA == table and rec.DEN.strip() == item["name"]:
                             rec.CANTITATE = rec.CANTITATE + 1
                             dbf.write(rec)
                             found = True
                             break
                     if not found:
-                        new_rec = dbf_file.new_record()
-                        new_rec.NR_MASA = table
-                        new_rec.DEN = item["name"]
-                        new_rec.CANTITATE = 1
-                        dbf.write(new_rec)
+                        # Minimal new record: only name, quantity, and table
+                        dbf_file.append({
+                            'DEN': item["name"],
+                            'CANTITATE': 1,
+                            'NR_MASA': table
+                        })
+
                 elif action == "remove":
                     for rec in dbf_file:
                         if rec.NR_MASA == table and rec.DEN.strip() == item["name"]:
@@ -167,6 +161,7 @@ def save_order_to_dbf(table, action, item, qty=None):
                             else:
                                 dbf.delete(rec)
                             break
+
                 elif action == "set_qty":
                     if qty <= 0:
                         for rec in dbf_file:
@@ -182,11 +177,12 @@ def save_order_to_dbf(table, action, item, qty=None):
                                 found = True
                                 break
                         if not found:
-                            new_rec = dbf_file.new_record()
-                            new_rec.NR_MASA = table
-                            new_rec.DEN = item["name"]
-                            new_rec.CANTITATE = qty
-                            dbf.write(new_rec)
+                            dbf_file.append({
+                                'DEN': item["name"],
+                                'CANTITATE': qty,
+                                'NR_MASA': table
+                            })
+
                 dbf_file.pack()
                 dbf_file.close()
                 return True
@@ -200,7 +196,6 @@ def save_order_to_dbf(table, action, item, qty=None):
             time.sleep(0.5)
     return False
 
-# ------------------- WebSocket Manager -------------------
 class ConnectionManager:
     def __init__(self):
         self.connections: List[WebSocket] = []
@@ -224,7 +219,6 @@ last_hash = ""
 def hash_orders(orders):
     return hashlib.md5(json.dumps(orders, sort_keys=True).encode()).hexdigest()
 
-# ------------------- HTTP Endpoints -------------------
 @app.get("/products")
 async def get_products():
     return fetch_products()
@@ -257,7 +251,6 @@ async def ws_endpoint(ws: WebSocket):
     except WebSocketDisconnect:
         manager.disconnect(ws)
 
-# ------------------- Polling -------------------
 async def poll_dbf():
     global orders_cache, last_hash
     while True:

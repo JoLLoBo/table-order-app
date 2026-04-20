@@ -1,4 +1,4 @@
-# mobile_app.py (with category/product hierarchy)
+# mobile_app.py (Complete - Expandable category panels)
 import flet as ft
 import requests
 import json
@@ -19,7 +19,7 @@ def main(page: ft.Page):
     page.scroll = ft.ScrollMode.AUTO
 
     # ------------------- Global State -------------------
-    products = []  # Now a list of categories, each with 'products'
+    products = []  # List of categories, each with 'products'
     orders = {i: [] for i in range(1, 13)}
     current_table = None
     current_update_order_list = None
