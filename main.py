@@ -1,16 +1,44 @@
-# mobile_app.py (Complete - Expandable category panels)
+# mobile_app.py (Complete – Configurable server IP via file storage)
 import flet as ft
 import requests
 import json
 import asyncio
 import websockets
+import os
 
-# ==================== CONFIGURATION ====================
-SERVER_IP = "192.168.1.129"   # <-- CHANGE THIS to your PC's IP
-SERVER_PORT = 8000
-BASE_URL = f"http://{SERVER_IP}:{SERVER_PORT}"
-WS_URL = f"ws://{SERVER_IP}:{SERVER_PORT}/ws"
-# =======================================================
+# ==================== CONFIG FILE ====================
+CONFIG_FILE = "server_config.json"
+
+def load_config():
+    """Load IP and port from JSON file."""
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, "r") as f:
+                data = json.load(f)
+                return data.get("ip"), data.get("port")
+        except:
+            pass
+    return None, None
+
+def save_config_to_file(ip, port):
+    """Save IP and port to JSON file."""
+    with open(CONFIG_FILE, "w") as f:
+        json.dump({"ip": ip, "port": port}, f)
+
+# ==================== GLOBAL CONFIG (will be set after load) ====================
+SERVER_IP = None
+SERVER_PORT = None
+BASE_URL = None
+WS_URL = None
+
+def set_global_config(ip, port):
+    """Update global variables and rebuild URLs."""
+    global SERVER_IP, SERVER_PORT, BASE_URL, WS_URL
+    SERVER_IP = ip
+    SERVER_PORT = port
+    BASE_URL = f"http://{SERVER_IP}:{SERVER_PORT}"
+    WS_URL = f"ws://{SERVER_IP}:{SERVER_PORT}/ws"
+# ================================================================================
 
 def main(page: ft.Page):
     page.title = "Table Orders"
@@ -19,7 +47,7 @@ def main(page: ft.Page):
     page.scroll = ft.ScrollMode.AUTO
 
     # ------------------- Global State -------------------
-    products = []  # List of categories, each with 'products'
+    products = []
     orders = {i: [] for i in range(1, 13)}
     current_table = None
     current_update_order_list = None
@@ -28,6 +56,88 @@ def main(page: ft.Page):
     grid = ft.Row(wrap=True, spacing=20, run_spacing=20, alignment=ft.MainAxisAlignment.CENTER)
     status_text = ft.Text("", color=ft.Colors.GREY_500)
 
+    # ------------------- Configuration Screen -------------------
+    def show_config_screen():
+        """Display form to enter server IP and port."""
+        page.controls.clear()
+
+        ip_field = ft.TextField(label="Server IP Address", value="192.168.1.129", width=300)
+        port_field = ft.TextField(label="Port", value="8000", width=150)
+        error_text = ft.Text("", color=ft.Colors.RED_500)
+
+        def on_save(e):
+            ip = ip_field.value.strip()
+            port_str = port_field.value.strip()
+            if not ip or not port_str:
+                error_text.value = "Both fields are required."
+                page.update()
+                return
+            try:
+                port = int(port_str)
+                if not (1 <= port <= 65535):
+                    raise ValueError
+            except ValueError:
+                error_text.value = "Port must be a number between 1 and 65535."
+                page.update()
+                return
+
+            save_config_to_file(ip, port)
+            set_global_config(ip, port)
+            # Restart main app
+            page.controls.clear()
+            initialize_app()
+
+        config_card = ft.Card(
+            content=ft.Container(
+                content=ft.Column([
+                    ft.Text("Connect to Server", size=28, weight=ft.FontWeight.BOLD),
+                    ft.Text("Enter the IP address and port of the PC running sync_service.py"),
+                    ip_field,
+                    port_field,
+                    error_text,
+                    ft.ElevatedButton("Save & Connect", on_click=on_save),
+                ], spacing=20, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+                padding=30,
+                width=400,
+            ),
+            elevation=5,
+        )
+
+        page.add(
+            ft.Row([config_card], alignment=ft.MainAxisAlignment.CENTER)
+        )
+        page.update()
+
+    # ------------------- Main App Initialization -------------------
+    def initialize_app():
+        """Called after config is set. Builds main UI and starts background tasks."""
+        page.controls.clear()
+
+        # Top bar with settings button
+        settings_btn = ft.IconButton(
+            icon=ft.Icons.SETTINGS,
+            tooltip="Change server IP/port",
+            on_click=lambda _: show_config_screen()
+        )
+
+        page.add(
+            ft.Row([
+                ft.Text("Select a Table", size=32, weight=ft.FontWeight.BOLD),
+                settings_btn,
+            ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
+        )
+        page.add(grid)
+        page.add(status_text)
+
+        # Fetch initial data
+        fetch_products()
+        fetch_orders()
+        # Start WebSocket listener
+        page.run_task(websocket_listener)
+
+        show_table_grid()
+
+    # ------------------- Table Grid Display -------------------
     def show_table_grid():
         grid.controls.clear()
         for t in range(1, 13):
@@ -122,7 +232,7 @@ def main(page: ft.Page):
         current_table = table
         page.controls.clear()
 
-        # Header
+        # Header with back button
         page.add(ft.Row([
             ft.IconButton(icon=ft.Icons.ARROW_BACK, on_click=lambda _: back_to_grid()),
             ft.Text(f"Table {table}", size=28, weight=ft.FontWeight.BOLD),
@@ -201,19 +311,30 @@ def main(page: ft.Page):
         current_table = None
         current_update_order_list = None
         page.controls.clear()
-        page.add(ft.Text("Select a Table", size=32, weight=ft.FontWeight.BOLD))
+
+        # Rebuild main screen with settings button
+        settings_btn = ft.IconButton(
+            icon=ft.Icons.SETTINGS,
+            tooltip="Change server IP/port",
+            on_click=lambda _: show_config_screen()
+        )
+
+        page.add(
+            ft.Row([
+                ft.Text("Select a Table", size=32, weight=ft.FontWeight.BOLD),
+                settings_btn,
+            ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
+        )
         page.add(grid)
         page.add(status_text)
         show_table_grid()
 
-    # ------------------- Initial Setup -------------------
-    fetch_products()
-    fetch_orders()
-    page.run_task(websocket_listener)
-
-    page.add(ft.Text("Select a Table", size=32, weight=ft.FontWeight.BOLD))
-    page.add(grid)
-    page.add(status_text)
-    show_table_grid()
+    # ------------------- Startup Flow -------------------
+    saved_ip, saved_port = load_config()
+    if saved_ip and saved_port:
+        set_global_config(saved_ip, saved_port)
+        initialize_app()
+    else:
+        show_config_screen()
 
 ft.app(target=main)
