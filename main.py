@@ -140,10 +140,26 @@ def main(page: ft.Page):
 
             page.run_task(connect_and_proceed)
 
+        def go_back(e):
+            # Only go back if a valid configuration exists
+            if SERVER_IP and SERVER_PORT:
+                page.controls.clear()
+                page.overlay.clear()
+                initialize_app()
+            else:
+                error_text.value = "No previous configuration found."
+                page.update()
+
+        # Back button (only shown if we have a config to return to)
+        back_btn = ft.IconButton(
+            icon=ft.Icons.ARROW_BACK, on_click=go_back, tooltip="Back to tables"
+        )
+
         config_card = ft.Card(
             content=ft.Container(
                 content=ft.Column(
                     [
+                        ft.Row([back_btn], alignment=ft.MainAxisAlignment.START),
                         ft.Text(
                             "Connect to Server", size=28, weight=ft.FontWeight.BOLD
                         ),
