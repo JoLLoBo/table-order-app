@@ -447,7 +447,8 @@ def main(page: ft.Page):
         def add_item(item):
             send_order_update(table, "add", item)
 
-        # Build expandable category tiles (tap anywhere on header)
+            # Build expandable category tiles (tap anywhere on header)
+
         category_tiles = []
         for cat in products:
             if not cat.get("products"):
@@ -467,7 +468,14 @@ def main(page: ft.Page):
                     size=18,
                     weight=ft.FontWeight.BOLD,
                 ),
-                controls=[ft.Column(product_buttons, scroll=ft.ScrollMode.AUTO)],
+                controls=[
+                    ft.Container(
+                        content=ft.Column(product_buttons, scroll=ft.ScrollMode.AUTO),
+                        padding=ft.padding.only(
+                            bottom=12
+                        ),  # adds space below last item
+                    )
+                ],
             )
             category_tiles.append(tile)
 
