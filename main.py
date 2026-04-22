@@ -1,4 +1,4 @@
-# mobile_app.py (Complete – Configurable server IP via file storage)
+# mobile_app.py (Complete – Configurable server IP, port, and tables + Optimistic UI)
 import flet as ft
 import requests
 import json
@@ -11,35 +11,37 @@ CONFIG_FILE = "server_config.json"
 
 
 def load_config():
-    """Load IP and port from JSON file."""
+    """Load IP, port, and table count from JSON file. Defaults to None, None, 12."""
     if os.path.exists(CONFIG_FILE):
         try:
             with open(CONFIG_FILE, "r") as f:
                 data = json.load(f)
-                return data.get("ip"), data.get("port")
+                return data.get("ip"), data.get("port"), data.get("tables", 12)
         except:
             pass
-    return None, None
+    return None, None, 12
 
 
-def save_config_to_file(ip, port):
-    """Save IP and port to JSON file."""
+def save_config_to_file(ip, port, tables):
+    """Save IP, port, and table count to JSON file."""
     with open(CONFIG_FILE, "w") as f:
-        json.dump({"ip": ip, "port": port}, f)
+        json.dump({"ip": ip, "port": port, "tables": tables}, f)
 
 
 # ==================== GLOBAL CONFIG (will be set after load) ====================
 SERVER_IP = None
 SERVER_PORT = None
+TABLE_COUNT = 12
 BASE_URL = None
 WS_URL = None
 
 
-def set_global_config(ip, port):
+def set_global_config(ip, port, tables):
     """Update global variables and rebuild URLs."""
-    global SERVER_IP, SERVER_PORT, BASE_URL, WS_URL
+    global SERVER_IP, SERVER_PORT, TABLE_COUNT, BASE_URL, WS_URL
     SERVER_IP = ip
     SERVER_PORT = port
+    TABLE_COUNT = tables
     BASE_URL = f"http://{SERVER_IP}:{SERVER_PORT}"
     WS_URL = f"ws://{SERVER_IP}:{SERVER_PORT}/ws"
 
@@ -55,7 +57,7 @@ def main(page: ft.Page):
 
     # ------------------- Global State -------------------
     products = []
-    orders = {i: [] for i in range(1, 13)}
+    orders = {}  # Will be initialized after TABLE_COUNT is known
     current_table = None
     current_update_order_list = None
     price_lookup = {}  # product name -> price
@@ -66,19 +68,43 @@ def main(page: ft.Page):
     )
     status_text = ft.Text("", color=ft.Colors.GREY_500)
 
+    # ------------------- Network Helper (async background send) -------------------
+    def send_order_update_async(table, action, item, qty=None):
+        """Send order update in background (fire-and-forget)."""
+        payload = {"table": table, "action": action, "item": item}
+        if qty is not None:
+            payload["qty"] = qty
+
+        async def _send():
+            try:
+                await asyncio.to_thread(
+                    requests.post, f"{BASE_URL}/order", json=payload, timeout=3
+                )
+            except Exception as e:
+                # Optional: show a snackbar for network errors
+                print(f"Failed to send order update: {e}")
+
+        page.run_task(_send)
+
     # ------------------- Configuration Screen -------------------
     def show_config_screen():
-        """Display form to enter server IP and port."""
+        """Display form to enter server IP, port, and number of tables."""
         page.controls.clear()
         page.overlay.clear()
 
-        saved_ip, saved_port = load_config()
+        saved_ip, saved_port, saved_tables = load_config()
 
         ip_field = ft.TextField(
             label="Server IP Address", value=saved_ip if saved_ip else "", width=300
         )
         port_field = ft.TextField(
             label="Port", value=str(saved_port) if saved_port else "", width=150
+        )
+        tables_field = ft.TextField(
+            label="Number of Tables",
+            value=str(saved_tables),
+            width=150,
+            keyboard_type=ft.KeyboardType.NUMBER,
         )
         error_text = ft.Text("", color=ft.Colors.RED_500)
 
@@ -108,8 +134,9 @@ def main(page: ft.Page):
         def on_save(e):
             ip = ip_field.value.strip()
             port_str = port_field.value.strip()
-            if not ip or not port_str:
-                error_text.value = "Both fields are required."
+            tables_str = tables_field.value.strip()
+            if not ip or not port_str or not tables_str:
+                error_text.value = "All fields are required."
                 page.update()
                 return
             try:
@@ -120,6 +147,14 @@ def main(page: ft.Page):
                 error_text.value = "Port must be a number between 1 and 65535."
                 page.update()
                 return
+            try:
+                tables = int(tables_str)
+                if tables < 1:
+                    raise ValueError
+            except ValueError:
+                error_text.value = "Number of tables must be a positive integer."
+                page.update()
+                return
 
             loading_overlay.visible = True
             error_text.value = ""
@@ -128,8 +163,8 @@ def main(page: ft.Page):
             async def connect_and_proceed():
                 success = await test_connection(ip, port)
                 if success:
-                    save_config_to_file(ip, port)
-                    set_global_config(ip, port)
+                    save_config_to_file(ip, port, tables)
+                    set_global_config(ip, port, tables)
                     page.overlay.clear()
                     page.controls.clear()
                     initialize_app()
@@ -168,6 +203,7 @@ def main(page: ft.Page):
                         ),
                         ip_field,
                         port_field,
+                        tables_field,
                         error_text,
                         ft.ElevatedButton("Test & Connect", on_click=on_save),
                     ],
@@ -204,9 +240,13 @@ def main(page: ft.Page):
         page.controls.clear()
         page.overlay.clear()
 
+        # Initialize orders dict with correct number of tables
+        nonlocal orders
+        orders = {i: [] for i in range(1, TABLE_COUNT + 1)}
+
         settings_btn = ft.IconButton(
             icon=ft.Icons.SETTINGS,
-            tooltip="Change server IP/port",
+            tooltip="Change server IP/port/table count",
             on_click=lambda _: show_config_screen(),
         )
 
@@ -258,7 +298,7 @@ def main(page: ft.Page):
     # ------------------- Table Grid Display -------------------
     def show_table_grid():
         grid.controls.clear()
-        for t in range(1, 13):
+        for t in range(1, TABLE_COUNT + 1):
             table_items = orders.get(t, [])
             item_count = len(table_items)
             total = 0.0
@@ -288,7 +328,7 @@ def main(page: ft.Page):
                     padding=15,
                 ),
                 bgcolor=bg_color,
-                color=ft.Colors.WHITE,  # white text works well on both gray and green
+                color=ft.Colors.WHITE,
                 width=180,
                 height=150,
                 on_click=lambda e, table=t: select_table(table),
@@ -323,23 +363,18 @@ def main(page: ft.Page):
         try:
             resp = requests.get(f"{BASE_URL}/orders", timeout=3)
             resp.raise_for_status()
-            orders = resp.json()
-            orders = {int(k): v for k, v in orders.items()}
+            raw_orders = resp.json()
+            # Merge server orders with our initialized dict (keep all tables)
+            new_orders = {i: [] for i in range(1, TABLE_COUNT + 1)}
+            for k, v in raw_orders.items():
+                table_num = int(k)
+                if 1 <= table_num <= TABLE_COUNT:
+                    new_orders[table_num] = v
+            orders = new_orders
         except Exception as e:
             print(f"Fetch orders error: {e}")
         show_table_grid()
         page.update()
-
-    def send_order_update(table, action, item, qty=None):
-        payload = {"table": table, "action": action, "item": item}
-        if qty is not None:
-            payload["qty"] = qty
-        try:
-            requests.post(f"{BASE_URL}/order", json=payload, timeout=3)
-        except Exception as e:
-            status_text.value = f"Send error: {e}"
-            status_text.color = ft.Colors.RED_500
-            page.update()
 
     # ------------------- WebSocket Listener -------------------
     async def websocket_listener():
@@ -355,7 +390,12 @@ def main(page: ft.Page):
                         if data.get("type") == "orders_update":
                             nonlocal orders
                             raw_orders = data["data"]
-                            orders = {int(k): v for k, v in raw_orders.items()}
+                            new_orders = {i: [] for i in range(1, TABLE_COUNT + 1)}
+                            for k, v in raw_orders.items():
+                                table_num = int(k)
+                                if 1 <= table_num <= TABLE_COUNT:
+                                    new_orders[table_num] = v
+                            orders = new_orders
                             if current_table is None:
                                 show_table_grid()
                             else:
@@ -396,14 +436,14 @@ def main(page: ft.Page):
             total = 0.0
 
             # Build a quick lookup map: product name -> price
-            price_lookup = {}
+            price_lookup_local = {}
             for cat in products:
                 for p in cat.get("products", []):
-                    price_lookup[p["name"]] = p.get("price", 0.0)
+                    price_lookup_local[p["name"]] = p.get("price", 0.0)
 
             for item in table_orders:
                 # Get price from lookup; default to 0 if not found
-                price = price_lookup.get(item["name"], 0.0)
+                price = price_lookup_local.get(item["name"], 0.0)
                 qty = item["qty"]
                 total += price * qty
 
@@ -439,16 +479,48 @@ def main(page: ft.Page):
 
         def change_qty(item, delta):
             new_qty = item["qty"] + delta
+            # --- Optimistic local update ---
+            table_orders = orders.get(table, [])
             if new_qty <= 0:
-                send_order_update(table, "remove", item)
+                # Remove item locally
+                orders[table] = [i for i in table_orders if i["name"] != item["name"]]
+                # Send remove request
+                send_order_update_async(table, "remove", item)
             else:
-                send_order_update(table, "set_qty", item, qty=new_qty)
+                # Update quantity locally
+                for i in table_orders:
+                    if i["name"] == item["name"]:
+                        i["qty"] = new_qty
+                        break
+                # Send set_qty request
+                send_order_update_async(table, "set_qty", item, qty=new_qty)
+            # Refresh the order list immediately
+            update_order_list()
 
         def add_item(item):
-            send_order_update(table, "add", item)
+            # --- Optimistic local update ---
+            table_orders = orders.get(table, [])
+            # Check if item already exists
+            existing = next(
+                (i for i in table_orders if i["name"] == item["name"]), None
+            )
+            if existing:
+                existing["qty"] += 1
+            else:
+                # Add new item with default emoji from product data
+                new_item = {
+                    "name": item["name"],
+                    "emoji": item.get("emoji", "🛒"),
+                    "qty": 1,
+                }
+                table_orders.append(new_item)
+                orders[table] = table_orders
+            # Send add request
+            send_order_update_async(table, "add", item)
+            # Refresh UI
+            update_order_list()
 
-            # Build expandable category tiles (tap anywhere on header)
-
+        # Build expandable category tiles
         category_tiles = []
         for cat in products:
             if not cat.get("products"):
@@ -471,15 +543,12 @@ def main(page: ft.Page):
                 controls=[
                     ft.Container(
                         content=ft.Column(product_buttons, scroll=ft.ScrollMode.AUTO),
-                        padding=ft.padding.only(
-                            bottom=12
-                        ),  # adds space below last item
+                        padding=ft.padding.only(bottom=12),
                     )
                 ],
             )
             category_tiles.append(tile)
 
-        # Wrap tiles in a scrollable column
         menu_section = ft.Column(category_tiles, scroll=ft.ScrollMode.AUTO)
 
         page.add(
@@ -500,10 +569,9 @@ def main(page: ft.Page):
         page.controls.clear()
         page.overlay.clear()
 
-        # Rebuild main screen with settings button
         settings_btn = ft.IconButton(
             icon=ft.Icons.SETTINGS,
-            tooltip="Change server IP/port",
+            tooltip="Change server IP/port/table count",
             on_click=lambda _: show_config_screen(),
         )
 
@@ -521,9 +589,9 @@ def main(page: ft.Page):
         show_table_grid()
 
     # ------------------- Startup Flow -------------------
-    saved_ip, saved_port = load_config()
+    saved_ip, saved_port, saved_tables = load_config()
     if saved_ip and saved_port:
-        set_global_config(saved_ip, saved_port)
+        set_global_config(saved_ip, saved_port, saved_tables)
         initialize_app()
     else:
         show_config_screen()
