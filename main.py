@@ -61,7 +61,7 @@ def main(page: ft.Page):
         """Display form to enter server IP and port."""
         page.controls.clear()
 
-        ip_field = ft.TextField(label="Server IP Address", value="192.168.1.129", width=300)
+        ip_field = ft.TextField(label="Server IP Address", value="192.168.1.199", width=300)
         port_field = ft.TextField(label="Port", value="8000", width=150)
         error_text = ft.Text("", color=ft.Colors.RED_500)
 
@@ -239,21 +239,38 @@ def main(page: ft.Page):
         ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN))
 
         order_list = ft.ListView(expand=True, spacing=10)
+        total_price_text = ft.Text("", size=20, weight=ft.FontWeight.BOLD)
 
         def update_order_list():
             order_list.controls.clear()
-            for item in orders.get(table, []):
+            table_orders = orders.get(table, [])
+            total = 0.0
+            
+            # Build a quick lookup map: product name -> price
+            price_lookup = {}
+            for cat in products:
+                for p in cat.get("products", []):
+                    price_lookup[p["name"]] = p.get("price", 0.0)
+            
+            for item in table_orders:
+                # Get price from lookup; default to 0 if not found
+                price = price_lookup.get(item["name"], 0.0)
+                qty = item["qty"]
+                total += price * qty
+                
                 row = ft.Row([
                     ft.Text(f"{item['emoji']} {item['name']}", expand=True, size=18),
-                    ft.Text(f"${item['price']:.2f}" if item['price'] > 0 else "",
+                    ft.Text(f"${price:.2f}" if price > 0 else "",
                             size=16, color=ft.Colors.BLUE_700),
                     ft.IconButton(icon=ft.Icons.REMOVE,
-                                  on_click=lambda e, i=item: change_qty(i, -1)),
-                    ft.Text(str(item["qty"]), width=40, text_align=ft.TextAlign.CENTER, size=18),
+                                on_click=lambda e, i=item: change_qty(i, -1)),
+                    ft.Text(str(qty), width=40, text_align=ft.TextAlign.CENTER, size=18),
                     ft.IconButton(icon=ft.Icons.ADD,
-                                  on_click=lambda e, i=item: change_qty(i, 1)),
+                                on_click=lambda e, i=item: change_qty(i, 1)),
                 ])
                 order_list.controls.append(row)
+            
+            total_price_text.value = f"Total: ${total:.2f}"
             page.update()
 
         current_update_order_list = update_order_list
@@ -300,6 +317,8 @@ def main(page: ft.Page):
         page.add(
             ft.Text("Current order:", size=20, weight=ft.FontWeight.BOLD),
             order_list,
+            ft.Divider(),
+            total_price_text,          # ← Added total display
             ft.Divider(),
             ft.Text("Add item:", size=20, weight=ft.FontWeight.BOLD),
             menu_section

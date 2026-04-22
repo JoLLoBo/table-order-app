@@ -1,0 +1,15 @@
+{
+  "ACCESS_DB_PATH": "D:\\Gestiune_og\\omnigest2018.accdb",
+  "ACCESS_DB_PASSWORD": "qaz",
+  "DBF_PATH": "D:\\gestiune_touch_mm_2_retea\\Fisiere\\vanzare.dbf",
+  "HOST": "0.0.0.0",
+  "PORT": 8000,
+  "CAT_ID_COL": "cod",
+  "CAT_NAME_COL": "den_raion",
+  "PROD_GRUPA_COL": "grupa",
+  "PROD_SUBGRUPA_COL": "subgrupa",
+  "PROD_NAME_COL": "den",
+  "PROD_PRICE_COL": "pretv",
+  "PROD_CODE_COL": "cod",
+  "PROD_CTVA_COL": "ctva"
+}

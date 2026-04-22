@@ -1,0 +1,5 @@
+build
+table_orders
+dist
+requirements.txt
+TableSyncService.spec

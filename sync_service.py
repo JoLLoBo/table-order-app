@@ -1,9 +1,10 @@
-# sync_service.py (Final – DISCOUNT and PRET_CUMP left empty)
+# sync_service.py (Configurable via config.json)
 import asyncio
 import json
 import pyodbc
 import hashlib
 import os
+import sys
 import time
 import traceback
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -13,22 +14,54 @@ from typing import Dict, List
 from dbfread import DBF
 import dbf
 
-# ==================== CONFIGURATION ====================
-ACCESS_DB_PATH = r"D:\Gestiune_og\omnigest2018.accdb"
-ACCESS_DB_PASSWORD = "qaz"
-DBF_PATH = r"D:\gestiune_touch_mm_2_retea\Fisiere\vanzare.dbf"
-HOST = "0.0.0.0"
-PORT = 8000
+# ==================== LOAD CONFIGURATION ====================
+CONFIG_FILE = "config.json"
 
-CAT_ID_COL = "cod"
-CAT_NAME_COL = "den_raion"
-PROD_GRUPA_COL = "grupa"
-PROD_SUBGRUPA_COL = "subgrupa"
-PROD_NAME_COL = "den"
-PROD_PRICE_COL = "pretv"
-PROD_CODE_COL = "cod"
-PROD_CTVA_COL = "ctva"
-# =======================================================
+DEFAULT_CONFIG = {
+    "ACCESS_DB_PATH": r"D:\Gestiune_og\omnigest2018.accdb",
+    "ACCESS_DB_PASSWORD": "qaz",
+    "DBF_PATH": r"D:\gestiune_touch_mm_2_retea\Fisiere\vanzare.dbf",
+    "HOST": "0.0.0.0",
+    "PORT": 8000,
+    "CAT_ID_COL": "cod",
+    "CAT_NAME_COL": "den_raion",
+    "PROD_GRUPA_COL": "grupa",
+    "PROD_SUBGRUPA_COL": "subgrupa",
+    "PROD_NAME_COL": "den",
+    "PROD_PRICE_COL": "pretv",
+    "PROD_CODE_COL": "cod",
+    "PROD_CTVA_COL": "ctva"
+}
+
+def load_config():
+    """Load configuration from config.json; create default if missing."""
+    if not os.path.exists(CONFIG_FILE):
+        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+            json.dump(DEFAULT_CONFIG, f, indent=4)
+        print(f"[INFO] Created default {CONFIG_FILE}. Please edit it with your actual paths and restart.")
+        sys.exit(0)
+    with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+        config = json.load(f)
+    return config
+
+config = load_config()
+
+# Assign configuration values
+ACCESS_DB_PATH = config["ACCESS_DB_PATH"]
+ACCESS_DB_PASSWORD = config["ACCESS_DB_PASSWORD"]
+DBF_PATH = config["DBF_PATH"]
+HOST = config["HOST"]
+PORT = config["PORT"]
+
+CAT_ID_COL = config["CAT_ID_COL"]
+CAT_NAME_COL = config["CAT_NAME_COL"]
+PROD_GRUPA_COL = config["PROD_GRUPA_COL"]
+PROD_SUBGRUPA_COL = config["PROD_SUBGRUPA_COL"]
+PROD_NAME_COL = config["PROD_NAME_COL"]
+PROD_PRICE_COL = config["PROD_PRICE_COL"]
+PROD_CODE_COL = config["PROD_CODE_COL"]
+PROD_CTVA_COL = config["PROD_CTVA_COL"]
+# ============================================================
 
 app = FastAPI()
 app.add_middleware(
@@ -139,7 +172,6 @@ def save_order_to_dbf(table, action, item, qty=None):
                     found = False
                     for rec in dbf_file:
                         if rec.NR_MASA == table and rec.DEN.strip() == item["name"]:
-                            # Use dbf.write with new quantity
                             dbf.write(rec, CANTITATE=rec.CANTITATE + 1)
                             found = True
                             break
