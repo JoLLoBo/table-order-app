@@ -51,6 +51,7 @@ def main(page: ft.Page):
     orders = {i: [] for i in range(1, 13)}
     current_table = None
     current_update_order_list = None
+    price_lookup = {}  # product name -> price
 
     # ------------------- UI Components -------------------
     grid = ft.Row(wrap=True, spacing=20, run_spacing=20, alignment=ft.MainAxisAlignment.CENTER)
@@ -141,21 +142,27 @@ def main(page: ft.Page):
     def show_table_grid():
         grid.controls.clear()
         for t in range(1, 13):
-            item_count = len(orders.get(t, []))
+            table_items = orders.get(t, [])
+            item_count = len(table_items)
+            total = 0.0
+            for item in table_items:
+                price = price_lookup.get(item["name"], 0.0)
+                total += price * item["qty"]
             color = ft.Colors.GREEN_400 if item_count == 0 else ft.Colors.ORANGE_400
             btn = ft.FilledButton(
                 content=ft.Container(
                     content=ft.Column([
                         ft.Text(f"Table {t}", size=24, weight=ft.FontWeight.BOLD),
                         ft.Text(f"{item_count} items", size=14),
+                        ft.Text(f"${total:.2f}", size=16, weight=ft.FontWeight.W_500),
                     ], alignment=ft.MainAxisAlignment.CENTER,
-                      horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+                    horizontal_alignment=ft.CrossAxisAlignment.CENTER),
                     padding=15,
                 ),
                 bgcolor=color,
                 color=ft.Colors.WHITE,
-                width=160,
-                height=130,
+                width=170,
+                height=150,
                 on_click=lambda e, table=t: select_table(table)
             )
             grid.controls.append(btn)
@@ -163,18 +170,24 @@ def main(page: ft.Page):
 
     # ------------------- Network Functions -------------------
     def fetch_products():
-        nonlocal products
+        nonlocal products, price_lookup
         try:
             resp = requests.get(f"{BASE_URL}/products", timeout=5)
             resp.raise_for_status()
             products = resp.json()
-            print(f"Fetched {len(products)} categories")
+            # Build price lookup dictionary
+            price_lookup.clear()
+            for cat in products:
+                for p in cat.get("products", []):
+                    price_lookup[p["name"]] = p.get("price", 0.0)
+            print(f"Fetched {len(products)} categories, {len(price_lookup)} products")
             status_text.value = "Connected"
             status_text.color = ft.Colors.GREEN_500
         except Exception as e:
             status_text.value = f"Error: {e}"
             status_text.color = ft.Colors.RED_500
             products = [{"id": 0, "name": "Offline", "emoji": "❌", "products": []}]
+            price_lookup.clear()
         page.update()
 
     def fetch_orders():
