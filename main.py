@@ -265,7 +265,13 @@ def main(page: ft.Page):
             for item in table_items:
                 price = price_lookup.get(item["name"], 0.0)
                 total += price * item["qty"]
-            color = ft.Colors.GREEN_400 if item_count == 0 else ft.Colors.ORANGE_400
+
+            # Color logic: gray when empty, green when items present
+            if item_count == 0:
+                bg_color = ft.Colors.GREY_400
+            else:
+                bg_color = ft.Colors.GREEN_400
+
             btn = ft.FilledButton(
                 content=ft.Container(
                     content=ft.Column(
@@ -281,9 +287,9 @@ def main(page: ft.Page):
                     ),
                     padding=15,
                 ),
-                bgcolor=color,
-                color=ft.Colors.WHITE,
-                width=170,
+                bgcolor=bg_color,
+                color=ft.Colors.WHITE,  # white text works well on both gray and green
+                width=180,
                 height=150,
                 on_click=lambda e, table=t: select_table(table),
             )
