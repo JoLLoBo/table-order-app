@@ -9,6 +9,7 @@ import os
 # ==================== CONFIG FILE ====================
 CONFIG_FILE = "server_config.json"
 
+
 def load_config():
     """Load IP and port from JSON file."""
     if os.path.exists(CONFIG_FILE):
@@ -20,16 +21,19 @@ def load_config():
             pass
     return None, None
 
+
 def save_config_to_file(ip, port):
     """Save IP and port to JSON file."""
     with open(CONFIG_FILE, "w") as f:
         json.dump({"ip": ip, "port": port}, f)
+
 
 # ==================== GLOBAL CONFIG (will be set after load) ====================
 SERVER_IP = None
 SERVER_PORT = None
 BASE_URL = None
 WS_URL = None
+
 
 def set_global_config(ip, port):
     """Update global variables and rebuild URLs."""
@@ -38,7 +42,10 @@ def set_global_config(ip, port):
     SERVER_PORT = port
     BASE_URL = f"http://{SERVER_IP}:{SERVER_PORT}"
     WS_URL = f"ws://{SERVER_IP}:{SERVER_PORT}/ws"
+
+
 # ================================================================================
+
 
 def main(page: ft.Page):
     page.title = "Table Orders"
@@ -54,17 +61,49 @@ def main(page: ft.Page):
     price_lookup = {}  # product name -> price
 
     # ------------------- UI Components -------------------
-    grid = ft.Row(wrap=True, spacing=20, run_spacing=20, alignment=ft.MainAxisAlignment.CENTER)
+    grid = ft.Row(
+        wrap=True, spacing=20, run_spacing=20, alignment=ft.MainAxisAlignment.CENTER
+    )
     status_text = ft.Text("", color=ft.Colors.GREY_500)
 
     # ------------------- Configuration Screen -------------------
     def show_config_screen():
         """Display form to enter server IP and port."""
         page.controls.clear()
+        page.overlay.clear()
 
-        ip_field = ft.TextField(label="Server IP Address", value="192.168.1.199", width=300)
-        port_field = ft.TextField(label="Port", value="8000", width=150)
+        saved_ip, saved_port = load_config()
+
+        ip_field = ft.TextField(
+            label="Server IP Address", value=saved_ip if saved_ip else "", width=300
+        )
+        port_field = ft.TextField(
+            label="Port", value=str(saved_port) if saved_port else "", width=150
+        )
         error_text = ft.Text("", color=ft.Colors.RED_500)
+
+        loading_overlay = ft.Container(
+            content=ft.Column(
+                [
+                    ft.ProgressRing(),
+                    ft.Text("Testing connection...", size=16),
+                ],
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+            padding=20,
+            bgcolor=ft.Colors.WHITE,
+            border_radius=10,
+            visible=False,
+        )
+
+        async def test_connection(ip: str, port: int) -> bool:
+            url = f"http://{ip}:{port}/products"
+            try:
+                resp = await asyncio.to_thread(requests.get, url, timeout=3)
+                resp.raise_for_status()
+                return True
+            except Exception:
+                return False
 
         def on_save(e):
             ip = ip_field.value.strip()
@@ -82,22 +121,43 @@ def main(page: ft.Page):
                 page.update()
                 return
 
-            save_config_to_file(ip, port)
-            set_global_config(ip, port)
-            # Restart main app
-            page.controls.clear()
-            initialize_app()
+            loading_overlay.visible = True
+            error_text.value = ""
+            page.update()
+
+            async def connect_and_proceed():
+                success = await test_connection(ip, port)
+                if success:
+                    save_config_to_file(ip, port)
+                    set_global_config(ip, port)
+                    page.overlay.clear()
+                    page.controls.clear()
+                    initialize_app()
+                else:
+                    loading_overlay.visible = False
+                    error_text.value = "Connection failed. Check IP and port."
+                    page.update()
+
+            page.run_task(connect_and_proceed)
 
         config_card = ft.Card(
             content=ft.Container(
-                content=ft.Column([
-                    ft.Text("Connect to Server", size=28, weight=ft.FontWeight.BOLD),
-                    ft.Text("Enter the IP address and port of the PC running sync_service.py"),
-                    ip_field,
-                    port_field,
-                    error_text,
-                    ft.ElevatedButton("Save & Connect", on_click=on_save),
-                ], spacing=20, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+                content=ft.Column(
+                    [
+                        ft.Text(
+                            "Connect to Server", size=28, weight=ft.FontWeight.BOLD
+                        ),
+                        ft.Text(
+                            "Enter the IP address and port of the PC running sync_service.py"
+                        ),
+                        ip_field,
+                        port_field,
+                        error_text,
+                        ft.ElevatedButton("Test & Connect", on_click=on_save),
+                    ],
+                    spacing=20,
+                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
                 padding=30,
                 width=400,
             ),
@@ -105,38 +165,79 @@ def main(page: ft.Page):
         )
 
         page.add(
-            ft.Row([config_card], alignment=ft.MainAxisAlignment.CENTER)
+            ft.Stack(
+                [
+                    ft.Row([config_card], alignment=ft.MainAxisAlignment.CENTER),
+                    ft.Column(
+                        [
+                            ft.Row(
+                                [loading_overlay], alignment=ft.MainAxisAlignment.CENTER
+                            )
+                        ],
+                        alignment=ft.MainAxisAlignment.CENTER,
+                        expand=True,
+                    ),
+                ],
+                expand=True,
+            )
         )
         page.update()
 
     # ------------------- Main App Initialization -------------------
     def initialize_app():
-        """Called after config is set. Builds main UI and starts background tasks."""
         page.controls.clear()
+        page.overlay.clear()
 
-        # Top bar with settings button
         settings_btn = ft.IconButton(
             icon=ft.Icons.SETTINGS,
             tooltip="Change server IP/port",
-            on_click=lambda _: show_config_screen()
+            on_click=lambda _: show_config_screen(),
         )
 
         page.add(
-            ft.Row([
-                ft.Text("Select a Table", size=32, weight=ft.FontWeight.BOLD),
-                settings_btn,
-            ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
+            ft.Row(
+                [
+                    ft.Text("Select a Table", size=32, weight=ft.FontWeight.BOLD),
+                    settings_btn,
+                ],
+                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            )
         )
         page.add(grid)
         page.add(status_text)
 
-        # Fetch initial data
-        fetch_products()
-        fetch_orders()
-        # Start WebSocket listener
-        page.run_task(websocket_listener)
+        loading_overlay = ft.Container(
+            content=ft.Column(
+                [
+                    ft.ProgressRing(),
+                    ft.Text("Loading menu and orders...", size=16),
+                ],
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+            padding=20,
+            bgcolor=ft.Colors.WHITE,
+            border_radius=10,
+            visible=True,
+        )
+        page.overlay.append(loading_overlay)
+        page.update()
 
-        show_table_grid()
+        async def load_initial_data():
+            try:
+                await asyncio.to_thread(fetch_products)
+                await asyncio.to_thread(fetch_orders)
+            except Exception as e:
+                print(f"Initial load failed: {e}")
+                page.overlay.clear()
+                show_config_screen()
+                return
+
+            page.overlay.clear()
+            show_table_grid()
+            page.run_task(websocket_listener)
+            page.update()
+
+        page.run_task(load_initial_data)
 
     # ------------------- Table Grid Display -------------------
     def show_table_grid():
@@ -151,19 +252,24 @@ def main(page: ft.Page):
             color = ft.Colors.GREEN_400 if item_count == 0 else ft.Colors.ORANGE_400
             btn = ft.FilledButton(
                 content=ft.Container(
-                    content=ft.Column([
-                        ft.Text(f"Table {t}", size=24, weight=ft.FontWeight.BOLD),
-                        ft.Text(f"{item_count} items", size=14),
-                        ft.Text(f"${total:.2f}", size=16, weight=ft.FontWeight.W_500),
-                    ], alignment=ft.MainAxisAlignment.CENTER,
-                    horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+                    content=ft.Column(
+                        [
+                            ft.Text(f"Table {t}", size=24, weight=ft.FontWeight.BOLD),
+                            ft.Text(f"{item_count} items", size=14),
+                            ft.Text(
+                                f"${total:.2f}", size=16, weight=ft.FontWeight.W_500
+                            ),
+                        ],
+                        alignment=ft.MainAxisAlignment.CENTER,
+                        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
                     padding=15,
                 ),
                 bgcolor=color,
                 color=ft.Colors.WHITE,
                 width=170,
                 height=150,
-                on_click=lambda e, table=t: select_table(table)
+                on_click=lambda e, table=t: select_table(table),
             )
             grid.controls.append(btn)
         page.update()
@@ -172,7 +278,7 @@ def main(page: ft.Page):
     def fetch_products():
         nonlocal products, price_lookup
         try:
-            resp = requests.get(f"{BASE_URL}/products", timeout=5)
+            resp = requests.get(f"{BASE_URL}/products", timeout=3)
             resp.raise_for_status()
             products = resp.json()
             # Build price lookup dictionary
@@ -193,7 +299,7 @@ def main(page: ft.Page):
     def fetch_orders():
         nonlocal orders
         try:
-            resp = requests.get(f"{BASE_URL}/orders", timeout=5)
+            resp = requests.get(f"{BASE_URL}/orders", timeout=3)
             resp.raise_for_status()
             orders = resp.json()
             orders = {int(k): v for k, v in orders.items()}
@@ -241,15 +347,23 @@ def main(page: ft.Page):
 
     # ------------------- Table Order Screen -------------------
     def select_table(table):
+        page.overlay.clear()
         nonlocal current_table, current_update_order_list
         current_table = table
         page.controls.clear()
 
         # Header with back button
-        page.add(ft.Row([
-            ft.IconButton(icon=ft.Icons.ARROW_BACK, on_click=lambda _: back_to_grid()),
-            ft.Text(f"Table {table}", size=28, weight=ft.FontWeight.BOLD),
-        ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN))
+        page.add(
+            ft.Row(
+                [
+                    ft.IconButton(
+                        icon=ft.Icons.ARROW_BACK, on_click=lambda _: back_to_grid()
+                    ),
+                    ft.Text(f"Table {table}", size=28, weight=ft.FontWeight.BOLD),
+                ],
+                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            )
+        )
 
         order_list = ft.ListView(expand=True, spacing=10)
         total_price_text = ft.Text("", size=20, weight=ft.FontWeight.BOLD)
@@ -258,31 +372,44 @@ def main(page: ft.Page):
             order_list.controls.clear()
             table_orders = orders.get(table, [])
             total = 0.0
-            
+
             # Build a quick lookup map: product name -> price
             price_lookup = {}
             for cat in products:
                 for p in cat.get("products", []):
                     price_lookup[p["name"]] = p.get("price", 0.0)
-            
+
             for item in table_orders:
                 # Get price from lookup; default to 0 if not found
                 price = price_lookup.get(item["name"], 0.0)
                 qty = item["qty"]
                 total += price * qty
-                
-                row = ft.Row([
-                    ft.Text(f"{item['emoji']} {item['name']}", expand=True, size=18),
-                    ft.Text(f"${price:.2f}" if price > 0 else "",
-                            size=16, color=ft.Colors.BLUE_700),
-                    ft.IconButton(icon=ft.Icons.REMOVE,
-                                on_click=lambda e, i=item: change_qty(i, -1)),
-                    ft.Text(str(qty), width=40, text_align=ft.TextAlign.CENTER, size=18),
-                    ft.IconButton(icon=ft.Icons.ADD,
-                                on_click=lambda e, i=item: change_qty(i, 1)),
-                ])
+
+                row = ft.Row(
+                    [
+                        ft.Text(
+                            f"{item['emoji']} {item['name']}", expand=True, size=18
+                        ),
+                        ft.Text(
+                            f"${price:.2f}" if price > 0 else "",
+                            size=16,
+                            color=ft.Colors.BLUE_700,
+                        ),
+                        ft.IconButton(
+                            icon=ft.Icons.REMOVE,
+                            on_click=lambda e, i=item: change_qty(i, -1),
+                        ),
+                        ft.Text(
+                            str(qty), width=40, text_align=ft.TextAlign.CENTER, size=18
+                        ),
+                        ft.IconButton(
+                            icon=ft.Icons.ADD,
+                            on_click=lambda e, i=item: change_qty(i, 1),
+                        ),
+                    ]
+                )
                 order_list.controls.append(row)
-            
+
             total_price_text.value = f"Total: ${total:.2f}"
             page.update()
 
@@ -305,15 +432,21 @@ def main(page: ft.Page):
                 continue
             product_buttons = []
             for p in cat["products"]:
-                price_text = f"  ${p['price']:.2f}" if p.get('price', 0) > 0 else ""
+                price_text = f"  ${p['price']:.2f}" if p.get("price", 0) > 0 else ""
                 product_buttons.append(
                     ft.FilledButton(
                         content=ft.Text(f"{p['emoji']} {p['name']}{price_text}"),
-                        on_click=lambda e, prod=p: add_item(prod)
+                        on_click=lambda e, prod=p: add_item(prod),
                     )
                 )
             panel = ft.ExpansionPanel(
-                header=ft.ListTile(title=ft.Text(f"{cat['emoji']} {cat['name']}", size=18, weight=ft.FontWeight.BOLD)),
+                header=ft.ListTile(
+                    title=ft.Text(
+                        f"{cat['emoji']} {cat['name']}",
+                        size=18,
+                        weight=ft.FontWeight.BOLD,
+                    )
+                ),
                 content=ft.Container(
                     content=ft.Column(product_buttons, scroll=ft.ScrollMode.AUTO),
                     padding=10,
@@ -331,10 +464,10 @@ def main(page: ft.Page):
             ft.Text("Current order:", size=20, weight=ft.FontWeight.BOLD),
             order_list,
             ft.Divider(),
-            total_price_text,          # ← Added total display
+            total_price_text,  # ← Added total display
             ft.Divider(),
             ft.Text("Add item:", size=20, weight=ft.FontWeight.BOLD),
-            menu_section
+            menu_section,
         )
         update_order_list()
 
@@ -343,19 +476,23 @@ def main(page: ft.Page):
         current_table = None
         current_update_order_list = None
         page.controls.clear()
+        page.overlay.clear()
 
         # Rebuild main screen with settings button
         settings_btn = ft.IconButton(
             icon=ft.Icons.SETTINGS,
             tooltip="Change server IP/port",
-            on_click=lambda _: show_config_screen()
+            on_click=lambda _: show_config_screen(),
         )
 
         page.add(
-            ft.Row([
-                ft.Text("Select a Table", size=32, weight=ft.FontWeight.BOLD),
-                settings_btn,
-            ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
+            ft.Row(
+                [
+                    ft.Text("Select a Table", size=32, weight=ft.FontWeight.BOLD),
+                    settings_btn,
+                ],
+                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            )
         )
         page.add(grid)
         page.add(status_text)
@@ -368,5 +505,6 @@ def main(page: ft.Page):
         initialize_app()
     else:
         show_config_screen()
+
 
 ft.app(target=main)
