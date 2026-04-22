@@ -447,8 +447,8 @@ def main(page: ft.Page):
         def add_item(item):
             send_order_update(table, "add", item)
 
-        # Build expandable category panels
-        category_panels = []
+        # Build expandable category tiles (tap anywhere on header)
+        category_tiles = []
         for cat in products:
             if not cat.get("products"):
                 continue
@@ -461,32 +461,24 @@ def main(page: ft.Page):
                         on_click=lambda e, prod=p: add_item(prod),
                     )
                 )
-            panel = ft.ExpansionPanel(
-                header=ft.ListTile(
-                    title=ft.Text(
-                        f"{cat['emoji']} {cat['name']}",
-                        size=18,
-                        weight=ft.FontWeight.BOLD,
-                    )
+            tile = ft.ExpansionTile(
+                title=ft.Text(
+                    f"{cat['emoji']} {cat['name']}",
+                    size=18,
+                    weight=ft.FontWeight.BOLD,
                 ),
-                content=ft.Container(
-                    content=ft.Column(product_buttons, scroll=ft.ScrollMode.AUTO),
-                    padding=10,
-                ),
-                expanded=False,
+                controls=[ft.Column(product_buttons, scroll=ft.ScrollMode.AUTO)],
             )
-            category_panels.append(panel)
+            category_tiles.append(tile)
 
-        menu_section = ft.ExpansionPanelList(
-            controls=category_panels,
-            expanded_header_padding=10,
-        )
+        # Wrap tiles in a scrollable column
+        menu_section = ft.Column(category_tiles, scroll=ft.ScrollMode.AUTO)
 
         page.add(
             ft.Text("Current order:", size=20, weight=ft.FontWeight.BOLD),
             order_list,
             ft.Divider(),
-            total_price_text,  # ← Added total display
+            total_price_text,
             ft.Divider(),
             ft.Text("Add item:", size=20, weight=ft.FontWeight.BOLD),
             menu_section,
