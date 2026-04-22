@@ -273,7 +273,7 @@ def main(page: ft.Page):
                             ft.Text(f"Table {t}", size=24, weight=ft.FontWeight.BOLD),
                             ft.Text(f"{item_count} items", size=14),
                             ft.Text(
-                                f"${total:.2f}", size=16, weight=ft.FontWeight.W_500
+                                f"{total:.2f} RON", size=16, weight=ft.FontWeight.W_500
                             ),
                         ],
                         alignment=ft.MainAxisAlignment.CENTER,
@@ -407,7 +407,7 @@ def main(page: ft.Page):
                             f"{item['emoji']} {item['name']}", expand=True, size=18
                         ),
                         ft.Text(
-                            f"${price:.2f}" if price > 0 else "",
+                            f"{price:.2f} RON" if price > 0 else "",
                             size=16,
                             color=ft.Colors.BLUE_700,
                         ),
@@ -426,7 +426,7 @@ def main(page: ft.Page):
                 )
                 order_list.controls.append(row)
 
-            total_price_text.value = f"Total: ${total:.2f}"
+            total_price_text.value = f"Total: {total:.2f} RON"
             page.update()
 
         current_update_order_list = update_order_list
@@ -448,7 +448,7 @@ def main(page: ft.Page):
                 continue
             product_buttons = []
             for p in cat["products"]:
-                price_text = f"  ${p['price']:.2f}" if p.get("price", 0) > 0 else ""
+                price_text = f"  {p['price']:.2f} RON" if p.get("price", 0) > 0 else ""
                 product_buttons.append(
                     ft.FilledButton(
                         content=ft.Text(f"{p['emoji']} {p['name']}{price_text}"),
